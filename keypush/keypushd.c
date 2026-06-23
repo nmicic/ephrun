@@ -400,8 +400,9 @@ int main(int argc, char **argv){
     const char *nak = "{\"ok\":false,\"err\":\"expired\"}";
     send_json(fd,&peer,nak); close(fd); return 0;
   }
-  if (tokenlen <= 0 || tokenlen != (int)strlen(token_b32) ||
-      strncmp(token, token_b32, (size_t)tokenlen) != 0){
+  size_t expected_token_len = strlen(token_b32);
+  if (tokenlen <= 0 || (size_t)tokenlen != expected_token_len ||
+      sodium_memcmp(token, token_b32, expected_token_len) != 0){
     const char *nak = "{\"ok\":false,\"err\":\"bad_token\"}";
     send_json(fd,&peer,nak); close(fd); return 0;
   }

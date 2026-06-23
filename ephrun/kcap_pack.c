@@ -22,28 +22,33 @@
 /* shared capsule definitions (endian helpers, kcap3_pack) */
 #include "kcap.h"
 
-/* read whole file; if path is NULL, read stdin */
-static int read_all(const char *path, unsigned char **buf, size_t *len) {
+/* read exactly one 32-byte private key; if path is NULL, read stdin */
+static int read_priv32(const char *path, unsigned char priv[32]) {
     FILE *f = path ? fopen(path, "rb") : stdin;
     if (!f) { perror("open input"); return -1; }
-    unsigned char *out = NULL;
-    size_t cap = 0, n = 0;
-    for (;;) {
-        if (n == cap) {
-            size_t ncap = cap ? cap*2 : 4096;
-            unsigned char *tmp = realloc(out, ncap);
-            if (!tmp) { free(out); if (path) fclose(f); return -1; }
-            out = tmp; cap = ncap;
-        }
-        size_t r = fread(out + n, 1, cap - n, f);
-        n += r;
-        if (r == 0) {
-            if (ferror(f)) { perror("read"); free(out); if (path) fclose(f); return -1; }
-            break;
-        }
+
+    size_t n = fread(priv, 1, 32, f);
+    int extra = fgetc(f);
+    int err = ferror(f);
+    if (path && fclose(f) != 0) {
+        sodium_memzero(priv, 32);
+        return -1;
     }
-    if (path) fclose(f);
-    *buf = out; *len = n; return 0;
+    if (n != 32 || err || extra != EOF) {
+        sodium_memzero(priv, 32);
+        fprintf(stderr, "input must be exactly 32 bytes (got %zu%s)\n",
+                n, extra != EOF ? "+" : "");
+        return -1;
+    }
+    return 0;
+}
+
+static int open_new_output(const char *path) {
+    int flags = O_WRONLY | O_CREAT | O_EXCL;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    return open(path, flags, 0600);
 }
 
 static void usage(const char *prog) {
@@ -83,13 +88,8 @@ int main(int argc, char **argv) {
     }
 
     /* read 32-byte secret */
-    unsigned char *priv = NULL; size_t plen = 0;
-    if (read_all(inpath, &priv, &plen) != 0) return 1;
-    if (plen != 32) {
-        fprintf(stderr, "input must be exactly 32 bytes (got %zu)\n", plen);
-        if (priv) { sodium_memzero(priv, plen); free(priv); }
-        return 2;
-    }
+    unsigned char priv[32];
+    if (read_priv32(inpath, priv) != 0) return 1;
 
     /* Pack KCAP3. Output is exactly 64 + 48 = 112 bytes for raw priv[32]. */
     unsigned char outbuf[sizeof(struct kcap3_hdr) + 32 +
@@ -98,19 +98,16 @@ int main(int argc, char **argv) {
     if (kcap3_pack(code, priv, outbuf, sizeof outbuf, &out_len) != 0) {
         fprintf(stderr, "kcap3_pack failed (Argon2id memory pressure or AEAD error)\n");
         sodium_memzero(priv, 32);
-        free(priv);
         sodium_memzero(outbuf, sizeof outbuf);
         return 1;
     }
     sodium_memzero(priv, 32);
-    free(priv);
 
     /* Write output. Set 0600 mode on newly created files (AC-01-G-05). */
     FILE *out = NULL;
     if (outpath) {
-        /* Open with restricted mode. fopen mode is implementation-defined,
-           so use open() + fdopen() to set perms reliably. */
-        int fd = open(outpath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        /* Use open() + fdopen() to set perms reliably and refuse overwrite. */
+        int fd = open_new_output(outpath);
         if (fd < 0) {
             perror("open out");
             sodium_memzero(outbuf, sizeof outbuf);
@@ -120,6 +117,7 @@ int main(int argc, char **argv) {
         if (!out) {
             perror("fdopen out");
             close(fd);
+            unlink(outpath);
             sodium_memzero(outbuf, sizeof outbuf);
             return 1;
         }
@@ -129,12 +127,17 @@ int main(int argc, char **argv) {
 
     if (fwrite(outbuf, 1, out_len, out) != out_len) {
         perror("write");
-        if (outpath) fclose(out);
+        if (outpath) { fclose(out); unlink(outpath); }
         sodium_memzero(outbuf, sizeof outbuf);
         return 1;
     }
 
-    if (outpath) fclose(out);
+    if (outpath && fclose(out) != 0) {
+        perror("close out");
+        unlink(outpath);
+        sodium_memzero(outbuf, sizeof outbuf);
+        return 1;
+    }
     sodium_memzero(outbuf, sizeof outbuf);
     /* label is unused beyond CLI sanity (KCAP3 has no label field); intentional. */
     (void)label;

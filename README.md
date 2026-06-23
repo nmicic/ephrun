@@ -1,6 +1,16 @@
 # ephrun — Encrypted ELF Execution System
 
-Encrypted binary distribution and execution system for Linux using X25519 + XSalsa20-Poly1305 (libsodium sealed boxes), Linux kernel keyring for key storage, and memfd for tamper-resistant in-memory execution.
+Encrypted binary distribution and execution system for Linux using X25519 + XSalsa20-Poly1305 (libsodium sealed boxes), Linux kernel keyring for key storage, and memfd-based in-memory execution.
+
+## Threat Model — Short Version
+
+ephrun protects encrypted artifacts at rest and raises the extraction bar on
+untrusted Linux hosts. It is **not** a DRM system and does **not** defend a
+running workload against a hostile root user, compromised kernel, ptrace-capable
+attacker, process-memory scraping, live runtime instrumentation, or a loader
+attack that affects a dynamically linked `elfdec-run` before `main()` starts
+(`STATIC=1` is the deployment hardening path for that case). See
+`SECURITY.md` for the full threat model.
 
 ## Architecture
 
@@ -429,7 +439,7 @@ brew install libsodium
 
 - **Transport:** X25519 + XSalsa20-Poly1305 authenticated encryption (sealed boxes)
 - **Key storage:** Linux kernel keyring (memory-protected, process-isolated, TTL support)
-- **Execution:** Sealed memfd (MFD_EXEC + F_SEAL_SHRINK/GROW/WRITE) — binary never touches disk
+- **Execution:** Sealed memfd (MFD_EXEC + F_SEAL_SHRINK/GROW/WRITE) — on the normal path, plaintext never touches a filesystem path
 - **Process hardening:** PR_SET_DUMPABLE=0, PR_SET_NO_NEW_PRIVS=1
 - **Memory safety:** sodium_memzero on all sensitive data, sodium_mlock on decrypted capsule keys
 - **Capsule encryption:** XChaCha20-Poly1305 AEAD with Argon2id key derivation; KCAP3 stores T/M/P in the header (default T=3, M=64 MiB, P=1) and AAD-binds the entire 64-byte header. KCAP2 (Argon2id, fixed params) and KCAP1 (SHA256 KDF) remain readable for migration.
