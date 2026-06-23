@@ -1,7 +1,5 @@
 # ephrun — Encrypted ELF Execution System
 
-Copyright (c) 2025 Nenad Micic \<nenad@micic.be\> — Licensed under the Apache License, Version 2.0
-
 Encrypted binary distribution and execution system for Linux using X25519 + XSalsa20-Poly1305 (libsodium sealed boxes), Linux kernel keyring for key storage, and memfd for tamper-resistant in-memory execution.
 
 ## Architecture
