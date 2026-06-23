@@ -1,0 +1,56 @@
+# ============================================================================
+# docker-compose.yml — ephrun Docker examples
+#
+# Usage:
+#   # Pattern A: Capsule (recommended)
+#   ELFDEC_CODE=your-secret docker compose up capsule
+#
+#   # Pattern B: keypushd (no secrets in image)
+#   docker compose up keypushd
+#   # Then from control machine, run keypush_send with bootstrap JSON
+# ============================================================================
+
+services:
+  # ── Pattern A: Capsule ──
+  # Image contains encrypted binary + encrypted capsule.
+  # ELFDEC_CODE injected at runtime via environment.
+  capsule:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        ELFDEC_CODE: ${ELFDEC_CODE:-demo-secret-change-me}
+    environment:
+      - ELFDEC_CODE=${ELFDEC_CODE:-demo-secret-change-me}
+    # In production, use Docker secrets or external secrets manager:
+    # secrets:
+    #   - elfdec_code
+    # environment:
+    #   - ELFDEC_CODE_FILE=/run/secrets/elfdec_code
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+
+  # ── Pattern B: keypushd ──
+  # Image contains NO keys. Key delivered at runtime via UDP.
+  keypushd:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.keypushd
+    ports:
+      - "9999:9999/udp"
+    environment:
+      - KEYPUSHD_PORT=9999
+      - KEYPUSHD_LABEL=prod/myapp
+      - KEYPUSHD_TTL=300
+    # keypushd needs keyctl — default seccomp allows it
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+
+# For production capsule pattern with Docker secrets:
+# secrets:
+#   elfdec_code:
+#     external: true

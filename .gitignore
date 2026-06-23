@@ -1,0 +1,32 @@
+# Compiled binaries
+genkey
+elfenc_pack
+elfdec-run
+kcap_pack
+kcap_unpack
+hello
+test_key
+keyring_crypto_test
+keyring_selftest
+kcap_kdf_test
+keypushd
+keypush_send
+
+# Generated keys and encrypted files
+*.bin
+*.elfenc
+
+# Test fixtures (committed)
+!ephrun/testdata/*.bin
+
+# Editor backups
+*~
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+
+# Build artifacts
+*.o
+*.d

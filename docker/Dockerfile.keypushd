@@ -1,0 +1,81 @@
+# ============================================================================
+# Dockerfile.keypushd — keypushd pattern (Mode 2 via UDP)
+#
+# The image contains NO keys at all — not even an encrypted capsule.
+# At runtime, the container starts keypushd, waits for a key delivery
+# via UDP sealed box, then executes the encrypted binary.
+#
+# This is the most paranoid option: a snapshot of the image or container
+# filesystem reveals nothing — the key exists only in kernel keyring memory.
+#
+# Build:
+#   docker build -t myapp-keypushd -f docker/Dockerfile.keypushd .
+#
+# Run:
+#   docker run -p 9999:9999/udp myapp-keypushd
+#   # Container prints bootstrap JSON to stdout, then waits.
+#   # From your control machine:
+#   cat priv.bin | ./keypush_send --ip <docker-host> --port 9999 \
+#       --srv-pk-b64 "<from bootstrap>" --token "<from bootstrap>" \
+#       --label prod/myapp --ttl 300 --wait-ack
+#   # Container receives key, decrypts, executes.
+# ============================================================================
+
+# ── Stage 1: Build ──
+FROM ubuntu:24.04 AS builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential libsodium-dev libkeyutils-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY ephrun/elfdec-run.c ephrun/elfenc_pack.c ephrun/genkey.c \
+     ephrun/hello.c ./
+COPY keypush/keypushd.c ./
+
+# Build runner + daemon
+RUN gcc -O2 -Wall -Wextra -D_GNU_SOURCE \
+        -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
+        elfdec-run.c -lsodium -lkeyutils -Wl,-z,relro,-z,now \
+        -o elfdec-run && \
+    gcc -O2 -Wall -Wextra \
+        -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
+        keypushd.c -lsodium -lkeyutils -Wl,-z,relro,-z,now \
+        -o keypushd && \
+    gcc -O2 elfenc_pack.c -lsodium -o elfenc_pack && \
+    gcc -O2 genkey.c -lsodium -o genkey && \
+    gcc -O2 hello.c -o hello
+
+# Create demo encrypted binary (in production, copy pre-built .elfenc)
+RUN ./genkey && \
+    ./elfenc_pack pub.bin hello hello.elfenc && \
+    rm -f hello genkey elfenc_pack
+
+# ── Stage 2: Runtime ──
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libsodium23 libkeyutils1 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/elfdec-run /usr/local/bin/elfdec-run
+COPY --from=builder /build/keypushd   /usr/local/bin/keypushd
+COPY --from=builder /build/hello.elfenc /app/hello.elfenc
+COPY --from=builder /build/pub.bin /app/pub.bin
+COPY docker/entrypoint-keypushd.sh /entrypoint.sh
+
+RUN chmod 0755 /usr/local/bin/elfdec-run /usr/local/bin/keypushd /entrypoint.sh
+
+WORKDIR /app
+
+# keypushd listens on this port
+EXPOSE 9999/udp
+
+ENV KEYPUSHD_PORT=9999 \
+    KEYPUSHD_LABEL=prod/myapp \
+    KEYPUSHD_TTL=300
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/app/hello.elfenc"]
